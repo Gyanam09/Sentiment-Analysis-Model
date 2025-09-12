@@ -165,7 +165,7 @@ class MELDDataset(Dataset):
             return None
 
 def collate_fn(batch):
-    # Filter out null samples
+    # Filter out null samples teri ma ka bhosda
     batch = list(filter(None, batch))
     return default_collate(batch)
 
