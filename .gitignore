@@ -1,0 +1,4 @@
+.venv/
+*.tar.gz
+*.mp4
+*.wav
