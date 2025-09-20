@@ -176,6 +176,8 @@ class MultimodalTrainer:
             patience=2
         )
 
+        self.current_train_losses = None
+
         self.emotion_criterion = nn.CrossEntropyLoss(
             label_smoothing=0.05
         )
@@ -183,6 +185,29 @@ class MultimodalTrainer:
         self.sentiment_criterion = nn.CrossEntropyLoss(
             label_smoothing=0.05
         )
+
+    def log_metrics(self, losses, metrics=None, phase="train"):
+        if phase == "train":
+            self.current_train_losses = losses
+        else: # Validation phase
+            self.writer.add_scalar('loss/total/train', self.current_train_losses['total'], self.global_step)
+            self.writer.add_scalar('loss/total/val', losses['total'], self.global_step)
+            
+            self.writer.add_scalar('loss/emotion/train', self.current_train_losses['emotion'], self.global_step)
+            self.writer.add_scalar('loss/emotion/val', losses['emotion'], self.global_step)
+            
+            self.writer.add_scalar('loss/sentiment/train', self.current_train_losses['sentiment'], self.global_step)
+            self.writer.add_scalar('loss/sentiment/val', losses['sentiment'], self.global_step)
+
+        if metrics:
+            self.writer.add_scalar(
+                f'{phase}/emotion_precision', metrics['emotion_precision'], self.global_step)
+            self.writer.add_scalar(
+                f'{phase}/emotion_accuracy', metrics['emotion_accuracy'], self.global_step)
+            self.writer.add_scalar(
+                f'{phase}/sentiment_precision', metrics['sentiment_precision'], self.global_step)
+            self.writer.add_scalar(
+                f'{phase}/sentiment_accuracy', metrics['sentiment_accuracy'], self.global_step)
 
     def train_epoch(self):
         self.model.train()
@@ -229,7 +254,13 @@ class MultimodalTrainer:
             running_loss['emotion'] += emotion_loss.item()
             running_loss['sentiment'] += sentiment_loss.item()
 
-            self.global_step() += 1
+            self.log_metrics({
+                'total': total_loss.item(),
+                'emotion': emotion_loss.item(),
+                'sentiment': sentiment_loss.item()
+            })
+
+            self.global_step += 1
 
         return {k: v/len(self.train_loader) for k, v in running_loss.items()}
 
@@ -287,6 +318,13 @@ class MultimodalTrainer:
             all_sentiment_labels, all_sentiment_preds, average='weighted')
         sentiment_accuracy = accuracy_score(all_sentiment_labels, all_sentiment_preds)
 
+        self.log_metrics(avg_loss, {
+            'emotion_precision': emotion_precision,
+            'emotion_accuracy': emotion_accuracy,
+            'sentiment_precision': sentiment_precision,
+            'sentiment_accuracy': sentiment_accuracy
+        }, phase=phase)
+        
         if phase == "val":
             self.scheduler.step(avg_loss['total'])
 
@@ -310,8 +348,8 @@ if __name__ == "__main__":
     model.eval()
 
     text_inputs = {
-        'input_ids': sample['text_inputs']['input_ids'].unsqueeze(0),
-        'attention_mask': sample['text_inputs']['attention_mask'].unsqueeze(0)
+        'input_ids': sample['text_input']['input_ids'].unsqueeze(0),
+        'attention_mask': sample['text_input']['attention_mask'].unsqueeze(0)
     }
     video_frames = sample['video_frames'].unsqueeze(0)
     audio_features = sample['audio_features'].unsqueeze(0)
@@ -319,8 +357,8 @@ if __name__ == "__main__":
     with torch.inference_mode():
         outputs = model(text_inputs, video_frames, audio_features)
 
-        emotion__probs = torch.softmax(outputs['emotions'], dim=1)[0]
-        sentiment__probs = torch.softmax(outputs['sentiments'], dim=1)[0]
+        emotion_probs = torch.softmax(outputs['emotions'], dim=1)[0]
+        sentiment_probs = torch.softmax(outputs['sentiments'], dim=1)[0]
 
     emotion_map = {
         0: 'anger', 1: 'disgust', 2: 'fear', 3: 'joy', 4: 'neutral', 5: 'sadness', 6: 'surprise'
@@ -330,11 +368,11 @@ if __name__ == "__main__":
         0: 'negative', 1: 'neutral', 2: 'positive'
     }
 
-    for i, prob in enumerate(emotion__probs):
+    for i, prob in enumerate(emotion_probs):
         print(f"{emotion_map[i]}: {prob:.2f}")
 
     
-    for i, prob in enumerate(sentiment__probs):
+    for i, prob in enumerate(sentiment_probs):
         print(f"{sentiment_map[i]}: {prob:.2f}")
 
     print("Predictions for utterance")
